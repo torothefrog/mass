@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # mass-update.sh - post your agent's status to your private Mass instance.
 #
-# Mass is a public app with private instances. Each instance is one encrypted
-# file, instances/<id>.json, on the gh-pages branch of torothefrog/mass.
-# The file is AES-256-CBC + HMAC-SHA256 ciphertext; the key never leaves your
-# devices (it lives in the # part of your view link, which browsers do not
-# send to any server).
+# Mass is a public app with private instances. An instance is a random id +
+# key from the dashboard's connect button ("Create my instance"). This
+# script publishes ONE retained MQTT message to mass/<id>/<your-agent-id>
+# on the relay; the payload is encrypted with your key (AES-256-CBC +
+# HMAC-SHA256, encrypt-then-MAC; the MAC also covers the instance id; a
+# per-agent monotonic seq lets readers drop replayed older statuses).
+#
+# Anyone with the key can read AND write every agent in the instance - the
+# key is the only credential. Share it only with your own agents. To retire
+# an instance, create a fresh one and stop using the old link; old messages
+# stay readable to anyone who ever had the old key.
 #
 # Usage:
 #   MASS_INSTANCE=<id> MASS_KEY=<key> ./mass-update.sh --id my-agent \
 #       --name "My Agent" --state working --message "Reading the tickets sheet" \
-#       [--task "TKT-010"] [--url "https://..."] [--repo-dir PATH]
-#
-# Get <id> and <key> from the dashboard's connect button ("Create my
-# instance"). The key is a secret: anyone who has it can read the instance.
-# Writing additionally needs push access to the repo.
+#       [--task "TKT-010"] [--url "https://..."]
 #
 # States: working | idle | waiting | offline
 #   working - actively doing something right now
@@ -25,20 +27,19 @@
 # Heartbeat: while you are active, re-run this at least every 5 minutes.
 # Entries older than 10 minutes render as stale on the dashboard.
 #
-# Needs: bash, git, python3, openssl, and push access to the repo.
+# Needs: bash, python3, openssl. No git, no repo access, no accounts.
+# Relay: test.mosquitto.org over TLS by default (public test server, no
+# SLA - see README). Override with MASS_BROKER=host:port for your own broker.
 #
 # Rules:
-#   - Only ever write your own --id key. Never touch other agents' entries.
-#   - Even though your instance is encrypted, keep name/message/task free of
-#     secrets and private data: ciphertext in git history outlives keys.
+#   - Only ever write your own --id topic. Never touch other agents.
+#   - Keep name/message/task free of secrets and private data even though
+#     payloads are encrypted: ciphertext outlives keys, and keys leak.
 #   - Keep message short (one line, what you are doing right now).
 
 set -euo pipefail
 
-REPO_URL="${MASS_REPO_URL:-https://github.com/torothefrog/mass.git}"
-REPO_DIR="${MASS_REPO_DIR:-$HOME/.mass/mass}"
-BRANCH="${MASS_BRANCH:-gh-pages}"
-
+BROKER="${MASS_BROKER:-test.mosquitto.org:8886}"
 INSTANCE="${MASS_INSTANCE:-}"
 KEY="${MASS_KEY:-}"
 ID="" NAME="" STATE="" MESSAGE="" TASK="" URL=""
@@ -53,7 +54,6 @@ while [ $# -gt 0 ]; do
     --url)      URL="$2"; shift 2;;
     --instance) INSTANCE="$2"; shift 2;;
     --key)      KEY="$2"; shift 2;;
-    --repo-dir) REPO_DIR="$2"; shift 2;;
     *) echo "unknown argument: $1" >&2; exit 2;;
   esac
 done
@@ -66,35 +66,18 @@ case "$STATE" in working|idle|waiting|offline) ;; *) echo "bad --state: $STATE" 
 [ -n "$INSTANCE" ] || { echo "MASS_INSTANCE (or --instance) is required - create one via the dashboard connect button" >&2; exit 2; }
 [ -n "$KEY" ]      || { echo "MASS_KEY (or --key) is required - it came with your instance link" >&2; exit 2; }
 echo "$INSTANCE" | grep -qE '^[A-Za-z0-9_-]{8,64}$' || { echo "bad instance id" >&2; exit 2; }
-for tool in git python3 openssl; do
+for tool in python3 openssl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "missing prerequisite: $tool" >&2; exit 2; }
 done
 
-# 1. get a fresh clone of the live status branch
-if [ -d "$REPO_DIR/.git" ]; then
-  git -C "$REPO_DIR" fetch origin "$BRANCH" --quiet
-  git -C "$REPO_DIR" checkout "$BRANCH" --quiet 2>/dev/null || git -C "$REPO_DIR" checkout -b "$BRANCH" --quiet
-  git -C "$REPO_DIR" reset --hard "origin/$BRANCH" --quiet
-else
-  mkdir -p "$(dirname "$REPO_DIR")"
-  git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$REPO_DIR" --quiet
-fi
-
-cd "$REPO_DIR"
-mkdir -p instances
-FILE="instances/$INSTANCE.json"
-
-# 2. decrypt the current instance file (if any), merge this agent's entry,
-#    re-encrypt. Crypto: encKey = SHA256(key || ":enc"), macKey = SHA256(key
-#    || ":mac"); AES-256-CBC with a random IV; HMAC-SHA256 over iv||ct
-#    (encrypt-then-MAC). Envelope: {"v":1,"iv":b64,"ct":b64,"tag":b64}.
 UPDATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-export MU_FILE="$FILE" MU_KEY="$KEY" MU_ID="$ID" MU_NAME="$NAME" MU_STATE="$STATE" \
-       MU_MESSAGE="$MESSAGE" MU_TASK="$TASK" MU_URL="$URL" MU_UPDATED="$UPDATED"
+export MU_BROKER="$BROKER" MU_KEY="$KEY" MU_INSTANCE="$INSTANCE" MU_ID="$ID" MU_NAME="$NAME" \
+       MU_STATE="$STATE" MU_MESSAGE="$MESSAGE" MU_TASK="$TASK" MU_URL="$URL" MU_UPDATED="$UPDATED"
 
 python3 - <<'PY'
-import base64, hashlib, hmac, json, os, subprocess, sys
+import base64, hashlib, hmac, json, os, socket, ssl, struct, subprocess, sys, time
 
+# --- crypto (openssl CLI for AES, stdlib for the rest) --------------------
 def b64url_decode(s):
     s = s.replace('-', '+').replace('_', '/')
     s += '=' * (-len(s) % 4)
@@ -105,59 +88,78 @@ def b64e(b): return base64.b64encode(b).decode()
 raw = b64url_decode(os.environ['MU_KEY'])
 enc_key = hashlib.sha256(raw + b':enc').digest()
 mac_key = hashlib.sha256(raw + b':mac').digest()
+ctx = os.environ['MU_INSTANCE'].encode()
 
-def aes_cbc(op, data, iv):
+def aes_cbc_encrypt(data, iv):
     p = subprocess.run(
-        ['openssl', 'enc', op, '-aes-256-cbc', '-K', enc_key.hex(), '-iv', iv.hex()],
+        ['openssl', 'enc', '-e', '-aes-256-cbc', '-K', enc_key.hex(), '-iv', iv.hex()],
         input=data, capture_output=True)
     if p.returncode != 0:
         sys.exit('mass: openssl failed: ' + p.stderr.decode()[:200])
     return p.stdout
 
-path = os.environ['MU_FILE']
-data = {'agents': {}}
-if os.path.exists(path):
-    env = json.load(open(path))
-    iv = base64.b64decode(env['iv']); ct = base64.b64decode(env['ct'])
-    tag = hmac.new(mac_key, iv + ct, hashlib.sha256).digest()
-    if not hmac.compare_digest(tag, base64.b64decode(env['tag'])):
-        sys.exit('mass: instance file failed verification (wrong key?)')
-    data = json.loads(aes_cbc('-d', ct, iv))
+# per-agent monotonic seq, kept in a local state file so replays are detectable
+state_dir = os.path.join(os.path.expanduser('~'), '.mass')
+os.makedirs(state_dir, exist_ok=True)
+state_path = os.path.join(state_dir, 'seq-' + os.environ['MU_INSTANCE'] + '-' + os.environ['MU_ID'])
+prev = 0
+try:
+    prev = int(open(state_path).read().strip())
+except Exception:
+    pass
+seq = max(int(time.time()), prev + 1)
 
-data.setdefault('agents', {})[os.environ['MU_ID']] = {
+payload = {'seq': seq, 'agent': {
+    'id': os.environ['MU_ID'],
     'name': os.environ['MU_NAME'],
     'state': os.environ['MU_STATE'],
     'message': os.environ['MU_MESSAGE'],
     'task': os.environ['MU_TASK'],
     'url': os.environ['MU_URL'],
     'updated': os.environ['MU_UPDATED'],
-}
+}}
 
 iv = os.urandom(16)
-ct = aes_cbc('-e', json.dumps(data).encode(), iv)
-tag = hmac.new(mac_key, iv + ct, hashlib.sha256).digest()
-with open(path, 'w') as f:
-    json.dump({'v': 1, 'iv': b64e(iv), 'ct': b64e(ct), 'tag': b64e(tag)}, f)
-    f.write('\n')
+ct = aes_cbc_encrypt(json.dumps(payload).encode(), iv)
+tag = hmac.new(mac_key, ctx + iv + ct, hashlib.sha256).digest()
+envelope = json.dumps({'v': 2, 'iv': b64e(iv), 'ct': b64e(ct), 'tag': b64e(tag)}).encode()
+
+# --- minimal MQTT 3.1.1 publish (QoS 0, retained), stdlib only -------------
+def enc_varint(n):
+    out = b''
+    while True:
+        d = n % 128; n //= 128
+        if n: d |= 128
+        out += bytes([d])
+        if not n: return out
+
+def enc_str(s):
+    b = s.encode()
+    return struct.pack('!H', len(b)) + b
+
+host, _, port_s = os.environ['MU_BROKER'].partition(':')
+port = int(port_s or '8883')
+client_id = 'mass-' + os.environ['MU_ID'] + '-' + str(os.getpid())
+
+connect = enc_str('MQTT') + bytes([4, 0x02]) + struct.pack('!H', 60) + enc_str(client_id)
+connect = bytes([0x10]) + enc_varint(len(connect)) + connect
+
+topic = 'mass/' + os.environ['MU_INSTANCE'] + '/' + os.environ['MU_ID']
+publish = enc_str(topic) + envelope
+publish = bytes([0x31]) + enc_varint(len(publish)) + publish  # QoS 0, retained
+
+ctx_tls = ssl.create_default_context()
+with socket.create_connection((host, port), timeout=15) as sock:
+    with ctx_tls.wrap_socket(sock, server_hostname=host) as tls:
+        tls.sendall(connect)
+        ack = tls.recv(4)
+        if len(ack) < 4 or ack[0] != 0x20 or ack[3] != 0:
+            sys.exit('mass: broker refused the connection')
+        tls.sendall(publish)
+        tls.sendall(b'\xe0\x00')  # DISCONNECT
+
+with open(state_path, 'w') as f:
+    f.write(str(seq))
 PY
 
-# 3. commit and push, with retries if another agent pushed first
-git add "$FILE"
-if git diff --cached --quiet; then
-  echo "mass: no change for $ID"
-  exit 0
-fi
-git -c user.name="${GIT_AUTHOR_NAME:-mass-agent}" \
-    -c user.email="${GIT_AUTHOR_EMAIL:-mass-agent@localhost}" \
-    commit --quiet -m "status: instance update"
-for attempt in 1 2 3; do
-  if git push --quiet origin "HEAD:$BRANCH" 2>/dev/null; then
-    echo "mass: $ID is $STATE - $MESSAGE"
-    exit 0
-  fi
-  sleep "$attempt"
-  git fetch origin "$BRANCH" --quiet
-  git rebase "origin/$BRANCH" --quiet || { git rebase --abort; exit 1; }
-done
-echo "mass: push failed after retries" >&2
-exit 1
+echo "mass: $ID is $STATE - $MESSAGE"

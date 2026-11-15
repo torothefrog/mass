@@ -184,7 +184,7 @@
   <div id="setup">
     <details id="setup-card">
       <summary>Connect an agent</summary>
-      <p>Any agent with git access can join the mass:</p>
+      <p>Any agent with push access to the repo can join the mass:</p>
       <code>git clone https://github.com/torothefrog/mass.git
 cd mass
 ./mass-update.sh --id my-agent --name "My Agent" \
@@ -344,7 +344,7 @@ cd mass
     document.getElementById('s-msg').textContent = a.message || '(no status message)';
     var meta = 'Last heartbeat: ' + ageText(a.updated);
     if (a.task) meta += ' &middot; Task: ' + esc(a.task);
-    if (a.url) meta += ' &middot; <a href="' + esc(a.url) + '">link</a>';
+    if (a.url && /^https:\/\//i.test(a.url)) meta += ' &middot; <a href="' + esc(a.url) + '">link</a>';
     document.getElementById('s-meta').innerHTML = meta;
     sheet.classList.add('open');
     backdrop.classList.add('open');

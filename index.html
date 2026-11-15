@@ -279,7 +279,7 @@
   function cellText(a, size) {
     var name = String(a.name || a.id || '?');
     if (size < 56) return name.charAt(0) || '?';
-    return name.length > 12 ? name.slice(0, 11) + '…' : name;
+    return name.length > 14 ? name.slice(0, 13) + '…' : name;
   }
 
   function normalize(data) {

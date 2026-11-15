@@ -195,6 +195,10 @@
     <div id="gen-out" hidden>
       <p class="meta">Your view link (keep all of it, including after the #):</p>
       <code id="gen-url"></code>
+      <p><a id="gen-open" href="#" target="_blank" rel="noopener">Open my dashboard now</a>
+      <span class="meta"> - then bookmark it or add it to your home screen.</span></p>
+      <p class="meta">Instructions for your agent (works like a skill):
+      <a href="https://github.com/torothefrog/mass#readme">github.com/torothefrog/mass</a></p>
       <p class="meta">Your agents join with:</p>
       <code id="gen-cmd"></code>
       <p class="meta">Anyone with the full link can read this instance, so treat
@@ -441,9 +445,9 @@
     return { enc: enc, mac: mac };
   }
 
-  async function decryptEnvelope(env, keys, instanceId) {
+  async function decryptEnvelope(env, keys, context) {
     var iv = b64ToBytes(env.iv), ct = b64ToBytes(env.ct), tag = b64ToBytes(env.tag);
-    var idb = new TextEncoder().encode(instanceId);
+    var idb = new TextEncoder().encode(context);
     var data = new Uint8Array(idb.length + iv.length + ct.length);
     data.set(idb); data.set(iv, idb.length); data.set(ct, idb.length + iv.length);
     var ok = await crypto.subtle.verify('HMAC', keys.mac, tag, data);
@@ -477,7 +481,7 @@
     seenMessages++;
     try {
       var env = JSON.parse(new TextDecoder().decode(payload));
-      var data = await decryptEnvelope(env, instKeys, inst.id);
+      var data = await decryptEnvelope(env, instKeys, inst.id + '/' + agentId);
       if (!data.agent || data.agent.id !== agentId) return; // topic/payload mismatch
       var seq = (typeof data.seq === 'number') ? data.seq : 0;
       if (seq < (lastSeq[agentId] || 0)) return; // replayed older status
@@ -528,6 +532,7 @@
       client.subscribe('mass/' + inst.id + '/+', { qos: 0 });
       render({ agents: agents });
     });
+    window.MASS = { client: client }; // test handle for reconnect fault injection
     client.on('message', function (topic, payload) { onMessage(topic, payload); });
     client.on('close', function () {
       modeEl.textContent = 'reconnecting';
@@ -555,6 +560,7 @@
     var key = bytesToB64url(crypto.getRandomValues(new Uint8Array(32)));
     var base = location.origin + location.pathname;
     document.getElementById('gen-url').textContent = base + '?i=' + id + '#k=' + key;
+    document.getElementById('gen-open').href = base + '?i=' + id + '#k=' + key;
     document.getElementById('gen-cmd').textContent =
       'MASS_INSTANCE=' + id + ' MASS_KEY=' + key + ' ./mass-update.sh --id my-agent --name "My Agent" --state working --message "What I am doing"';
     document.getElementById('gen-out').hidden = false;

@@ -25,10 +25,11 @@ cd mass
   --state working --message "Reading the tickets sheet"
 ```
 
-`mass-update.sh` keeps a reusable clone in `~/.mass/mass`, updates only your
-entry in `agents.json`, commits and pushes. Re-run it whenever your status
-changes and at least every 5 minutes while you are active - entries older
-than 10 minutes show as stale on the dashboard.
+`mass-update.sh` keeps a reusable clone of the `gh-pages` branch (the branch
+GitHub Pages actually serves) in `~/.mass/mass`, updates only your entry in
+`agents.json`, commits and pushes. Re-run it whenever your status changes and
+at least every 5 minutes while you are active - entries older than 10 minutes
+show as stale on the dashboard.
 
 If you are an agent reading this README because someone pointed you at this
 repo: that one command is the whole integration. Pick a stable lowercase
@@ -37,7 +38,9 @@ you shut down.
 
 ### No shell? Any git client works
 
-The contract is just this file: `agents.json` at the repo root.
+The contract is just this file: `agents.json` on the `gh-pages` branch. The
+deployed site serves exactly that branch, so status commits go there (the
+helper script handles this for you).
 
 ```json
 {
@@ -80,9 +83,12 @@ Add or update your own key, commit, push. `updated` is UTC ISO 8601.
 
 - `index.html` - the whole dashboard (layout, spawn cluster, detail sheet).
   Reads `agents.json` from the same origin, no external calls.
-- `agents.json` - the status store. Agents commit; the page reads.
+- `agents.json` - the status store. Agents commit it to the `gh-pages`
+  branch; the page reads it.
 - `mass-update.sh` - optional helper that does the git dance for you.
-- No build step. GitHub Pages serves the repo root as-is.
+- No build step. GitHub Pages serves the `gh-pages` branch root as-is.
+  `main` carries the same site source; when the site code changes, push it
+  to both branches.
 
 Demo mode: when `agents.json` is empty or unreachable, the page shows a
 clearly labeled demo cluster so the design is visible before the first agent

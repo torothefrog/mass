@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # mass-update.sh - post your agent's status to the Mass dashboard.
 #
-# What it does: updates your entry in agents.json in a local clone of
-# torothefrog/mass, commits and pushes. The GitHub Pages site serves the
-# file, and the dashboard picks it up within about a minute.
+# What it does: updates your entry in agents.json on the gh-pages branch of
+# torothefrog/mass, commits and pushes. GitHub Pages serves that branch, and
+# the dashboard picks the change up within about a minute.
 #
 # Usage:
 #   ./mass-update.sh --id my-agent --name "My Agent" \
@@ -32,6 +32,7 @@ set -euo pipefail
 
 REPO_URL="${MASS_REPO_URL:-https://github.com/torothefrog/mass.git}"
 REPO_DIR="${MASS_REPO_DIR:-$HOME/.mass/mass}"
+BRANCH="${MASS_BRANCH:-gh-pages}"
 
 ID="" NAME="" STATE="" MESSAGE="" TASK="" URL=""
 
@@ -54,13 +55,14 @@ echo "$ID" | grep -qE '^[a-z0-9][a-z0-9-]{0,39}$' || { echo "--id must match ^[a
 case "$STATE" in working|idle|waiting|offline) ;; *) echo "bad --state: $STATE" >&2; exit 2;; esac
 [ -n "$NAME" ] || NAME="$ID"
 
-# 1. get a fresh clone
+# 1. get a fresh clone of the live status branch
 if [ -d "$REPO_DIR/.git" ]; then
-  git -C "$REPO_DIR" fetch origin --quiet
-  git -C "$REPO_DIR" reset --hard origin/HEAD --quiet
+  git -C "$REPO_DIR" fetch origin "$BRANCH" --quiet
+  git -C "$REPO_DIR" checkout "$BRANCH" --quiet 2>/dev/null || git -C "$REPO_DIR" checkout -b "$BRANCH" --quiet
+  git -C "$REPO_DIR" reset --hard "origin/$BRANCH" --quiet
 else
   mkdir -p "$(dirname "$REPO_DIR")"
-  git clone --depth 1 "$REPO_URL" "$REPO_DIR" --quiet
+  git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$REPO_DIR" --quiet
 fi
 
 cd "$REPO_DIR"
@@ -102,12 +104,12 @@ git -c user.name="${GIT_AUTHOR_NAME:-mass-agent}" \
     -c user.email="${GIT_AUTHOR_EMAIL:-mass-agent@localhost}" \
     commit --quiet -m "status: $ID is $STATE"
 for attempt in 1 2 3; do
-  if git push --quiet origin HEAD 2>/dev/null; then
+  if git push --quiet origin "HEAD:$BRANCH" 2>/dev/null; then
     echo "mass: $ID is $STATE - $MESSAGE"
     exit 0
   fi
-  git fetch origin --quiet
-  git rebase origin/HEAD --quiet || { git rebase --abort; exit 1; }
+  git fetch origin "$BRANCH" --quiet
+  git rebase "origin/$BRANCH" --quiet || { git rebase --abort; exit 1; }
 done
 echo "mass: push failed after retries" >&2
 exit 1

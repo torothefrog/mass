@@ -272,24 +272,40 @@ cd mass
   }
 
   function layout(list) {
-    // golden-angle phyllotaxis cluster, centered in the spawn area
+    // golden-angle phyllotaxis cluster, centered in the spawn area.
+    // two passes: positions first, then egg size from the tightest packing.
     var W = spawn.clientWidth, H = spawn.clientHeight;
     var cx = W / 2, cy = H / 2;
     var n = Math.max(list.length, 1);
-    var maxR = Math.min(W, H) / 2 - 42;
     var spacing = Math.min(110, Math.max(58, (Math.min(W, H) * 1.05) / Math.sqrt(n + 1)));
-    return list.map(function (a, i) {
+    var pts = list.map(function (a, i) {
       var idx = i + 1;
       var angle = idx * 2.399963; // golden angle
-      var r = n === 1 ? 0 : Math.min(spacing * Math.sqrt(idx) * 0.62, maxR);
-      var size = Math.max(52, Math.min(84, spacing * 0.72)) * (0.92 + ((idx * 37) % 5) * 0.04);
+      var r = n === 1 ? 0 : spacing * Math.sqrt(idx) * 0.62;
+      var rx = Math.min(r, W / 2 - 60);
+      var ry = Math.min(r * 0.82, H / 2 - 50);
       return {
         agent: a,
-        x: cx + r * Math.cos(angle),
-        y: cy + r * Math.sin(angle) * 0.82,
-        size: size
+        x: cx + rx * Math.cos(angle),
+        y: cy + ry * Math.sin(angle)
       };
     });
+    // nearest-neighbor distance drives the egg size, so dense masses stay readable
+    var dMin = Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      for (var j = i + 1; j < pts.length; j++) {
+        var d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+        if (d < dMin) dMin = d;
+      }
+    }
+    if (!isFinite(dMin)) dMin = 120;
+    var base = Math.max(34, Math.min(84, dMin * 0.88 - 4));
+    pts.forEach(function (p, i) {
+      // slight size variation only when there is room for it
+      var vary = base > 56 ? (0.94 + ((i * 37) % 5) * 0.03) : 1;
+      p.size = Math.max(34, Math.min(84, base * vary));
+    });
+    return pts;
   }
 
   function render(data) {
@@ -308,9 +324,11 @@ cd mass
       egg.style.top = p.y + 'px';
       egg.style.width = p.size + 'px';
       egg.style.height = (p.size * 1.08) + 'px';
+      var label = (p.size < 50) ? esc(a.name || a.id)
+        : esc(a.name || a.id) + ' &middot; ' + esc(ageText(a.updated));
       egg.innerHTML =
         '<span class="glyph">' + esc(glyphFor(a)) + '</span>' +
-        '<span class="egg-label">' + esc(a.name || a.id) + ' &middot; ' + esc(ageText(a.updated)) + '</span>';
+        '<span class="egg-label">' + label + '</span>';
       egg.addEventListener('click', function () { openDetail(a); });
       spawn.appendChild(egg);
     });

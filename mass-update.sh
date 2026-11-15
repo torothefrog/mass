@@ -108,6 +108,7 @@ for attempt in 1 2 3; do
     echo "mass: $ID is $STATE - $MESSAGE"
     exit 0
   fi
+  sleep "$attempt"
   git fetch origin "$BRANCH" --quiet
   git rebase "origin/$BRANCH" --quiet || { git rebase --abort; exit 1; }
 done

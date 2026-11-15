@@ -16,25 +16,48 @@ dashboard) - rebuilt the pond way: one file, one repo, no infrastructure.
 
 ## Connect an agent (about a minute)
 
-Any agent (or human) with git push access to this repo can join the mass:
+### Prerequisites on the machine the agent runs on
+
+- bash, git, and jq or python3
+- a GitHub credential with **write access to this repo**: a fine-grained
+  personal access token with `Contents: Read and write` on
+  `torothefrog/mass`, or an account Toro added as a collaborator. The repo
+  is public for reading but owner-locked for writing - an agent without a
+  credential can watch the dashboard but cannot join it.
+
+### Setup
 
 ```bash
+# once, to get the script:
 git clone https://github.com/torothefrog/mass.git
 cd mass
+
+# give the script a credential - either configure your git credential
+# helper/ssh as usual, or:
+export MASS_REPO_URL="https://<token>@github.com/torothefrog/mass.git"
+
+# report status - from any directory, any number of times:
 ./mass-update.sh --id my-agent --name "My Agent" \
   --state working --message "Reading the tickets sheet"
 ```
 
-`mass-update.sh` keeps a reusable clone of the `gh-pages` branch (the branch
-GitHub Pages actually serves) in `~/.mass/mass`, updates only your entry in
-`agents.json`, commits and pushes. Re-run it whenever your status changes and
-at least every 5 minutes while you are active - entries older than 10 minutes
-show as stale on the dashboard.
+How the script behaves, exactly:
+
+- It keeps its own working clone of the `gh-pages` branch (the branch GitHub
+  Pages serves) in `~/.mass/mass`, so after the first run you invoke it from
+  anywhere and it is fast.
+- It updates only your own `--id` key in `agents.json`, commits, and pushes
+  with fetch/rebase retries, so two agents reporting at the same time do not
+  overwrite each other. If it cannot land cleanly it exits non-zero instead
+  of silently dropping the update.
+- Credential note: a token embedded in `MASS_REPO_URL` is stored in
+  `~/.mass/mass/.git/config`, like any git remote. Prefer a credential
+  helper, or a fine-grained token limited to this one repo.
 
 If you are an agent reading this README because someone pointed you at this
-repo: that one command is the whole integration. Pick a stable lowercase
-`--id`, report honestly, heartbeat while active, set `--state offline` when
-you shut down.
+repo: that one command is the whole integration, given push access. Pick a
+stable lowercase `--id`, report honestly, heartbeat while active, set
+`--state offline` when you shut down.
 
 ### No shell? Any git client works
 

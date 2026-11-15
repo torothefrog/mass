@@ -75,11 +75,17 @@
   }
   #connect-btn:active { background: rgba(126,224,129,0.12); }
 
-  /* spawn cluster fills everything left over */
+  /* spawn cluster fills everything left over; the inner field grows past
+     the viewport (and scrolls) rather than ever shrinking eggs below 88px */
   #spawn {
     flex: 1 1 auto;
     position: relative;
     min-height: 0;
+    overflow: auto;
+  }
+  #field {
+    position: relative;
+    width: 100%; height: 100%;
   }
   /* flat circles: the border carries the status, text stays inside */
   .egg {
@@ -181,7 +187,7 @@
     <button id="connect-btn">connect</button>
   </div>
 
-  <div id="spawn" role="list" aria-label="Agents"></div>
+  <div id="spawn" role="list" aria-label="Agents"><div id="field"></div></div>
   <div id="empty">No agents have reported yet.<br>Tap "connect" to add one.</div>
 
   <div id="backdrop"></div>
@@ -241,6 +247,7 @@
   };
 
   var spawn = document.getElementById('spawn');
+  var fieldEl = document.getElementById('field');
   var countsEl = document.getElementById('counts');
   var modeEl = document.getElementById('mode');
   var checkedEl = document.getElementById('checked');
@@ -299,37 +306,35 @@
     return out;
   }
 
+  // resting size is fixed: 88px, per the design. Eggs never shrink below
+  // it - when the cluster outgrows the screen, the field grows and scrolls.
+  var EGG_SIZE = 88;
+
   function layout(list) {
-    // golden-angle phyllotaxis cluster, centered in the spawn area.
-    // two passes: positions first, then egg size from the tightest packing.
     var W = spawn.clientWidth, H = spawn.clientHeight;
-    var cx = W / 2, cy = H / 2;
-    var n = Math.max(list.length, 1);
-    var spacing = Math.min(132, Math.max(96, (Math.min(W, H) * 1.05) / Math.sqrt(n + 1)));
+    var n = list.length;
+    if (!n) { fieldEl.style.width = '100%'; fieldEl.style.height = '100%'; return []; }
+    // golden-angle phyllotaxis cluster around the center; spacing keeps
+    // 88px circles clear of each other even when dense
+    var spacing = 164;
     var pts = list.map(function (a, i) {
       var idx = i + 1;
       var angle = idx * 2.399963; // golden angle
       var r = n === 1 ? 0 : spacing * Math.sqrt(idx) * 0.62;
-      var rx = Math.min(r, W / 2 - 60);
-      var ry = Math.min(r * 0.82, H / 2 - 56);
-      return {
-        agent: a,
-        x: cx + rx * Math.cos(angle),
-        y: cy + ry * Math.sin(angle)
-      };
+      return { agent: a, dx: r * Math.cos(angle), dy: r * Math.sin(angle) * 0.82 };
     });
-    // nearest-neighbor distance drives the egg size, so dense masses stay readable
-    var dMin = Infinity;
-    for (var i = 0; i < pts.length; i++) {
-      for (var j = i + 1; j < pts.length; j++) {
-        var d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
-        if (d < dMin) dMin = d;
-      }
-    }
-    if (!isFinite(dMin)) dMin = 200;
-    // target resting size is ~88-96px; only extreme crowds go smaller
-    var size = Math.max(44, Math.min(96, dMin * 0.9 - 6));
-    pts.forEach(function (p) { p.size = size; });
+    var maxX = 0, maxY = 0;
+    pts.forEach(function (p) {
+      maxX = Math.max(maxX, Math.abs(p.dx));
+      maxY = Math.max(maxY, Math.abs(p.dy));
+    });
+    var margin = EGG_SIZE / 2 + 24;
+    var fieldW = Math.max(W, 2 * (maxX + margin));
+    var fieldH = Math.max(H, 2 * (maxY + margin));
+    fieldEl.style.width = fieldW + 'px';
+    fieldEl.style.height = fieldH + 'px';
+    var cx = fieldW / 2, cy = fieldH / 2;
+    pts.forEach(function (p) { p.x = cx + p.dx; p.y = cy + p.dy; p.size = EGG_SIZE; });
     return pts;
   }
 
@@ -362,7 +367,7 @@
         egg.setAttribute('role', 'listitem');
         egg.addEventListener('click', function () { openDetail(egg._agent); });
         egg.addEventListener('animationend', function () { egg.classList.remove('enter', 'bump'); });
-        spawn.appendChild(egg);
+        fieldEl.appendChild(egg);
         eggEls[a.id] = egg;
       }
       egg._agent = a;
@@ -483,7 +488,7 @@
     modeEl.classList.add('demo');
     current = null;
     eggEls = {};
-    spawn.innerHTML = '';
+    fieldEl.innerHTML = '';
     countsEl.textContent = '';
     emptyEl.innerHTML = esc(why);
     emptyEl.style.display = 'flex';
@@ -528,7 +533,8 @@
     instKeys = null;
     current = null;
     eggEls = {};
-    spawn.innerHTML = '';
+    fieldEl.innerHTML = '';
+    spawn.scrollTop = 0; spawn.scrollLeft = 0;
     countsEl.textContent = '';
     emptyEl.style.display = 'none';
   }

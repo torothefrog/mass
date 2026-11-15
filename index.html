@@ -75,18 +75,36 @@
   }
   #connect-btn:active { background: rgba(126,224,129,0.12); }
 
-  /* spawn cluster fills everything left over; the inner field grows past
-     the viewport (and scrolls) rather than ever shrinking eggs below 88px */
+  /* spawn cluster fills everything left over: single screen, no scroll.
+     Crowds paginate - the pager appears only when a second page exists. */
   #spawn {
     flex: 1 1 auto;
     position: relative;
     min-height: 0;
-    overflow: auto;
+    overflow: hidden;
   }
   #field {
     position: relative;
     width: 100%; height: 100%;
   }
+  #pager {
+    position: absolute; left: 50%; bottom: calc(8px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    display: none; align-items: center; gap: 12px; z-index: 5;
+  }
+  #pager.show { display: flex; }
+  #pager button {
+    background: none; border: 1px solid rgba(126,224,129,0.35); color: var(--frog);
+    font: inherit; font-size: 13px; border-radius: 999px;
+    width: 30px; height: 30px; cursor: pointer; padding: 0;
+  }
+  #pager .dots { display: flex; gap: 7px; }
+  #pager .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    border: 1px solid rgba(126,224,129,0.5); background: none;
+    cursor: pointer; padding: 0;
+  }
+  #pager .dot.on { background: var(--frog); }
   /* flat circles: the border carries the status, text stays inside */
   .egg {
     position: absolute; transform: translate(-50%, -50%);
@@ -187,7 +205,9 @@
     <button id="connect-btn">connect</button>
   </div>
 
-  <div id="spawn" role="list" aria-label="Agents"><div id="field"></div></div>
+  <div id="spawn" role="list" aria-label="Agents"><div id="field"></div>
+    <div id="pager"><button type="button" id="pg-prev" aria-label="Previous page">&lsaquo;</button><span class="dots" id="pg-dots"></span><button type="button" id="pg-next" aria-label="Next page">&rsaquo;</button></div>
+  </div>
   <div id="empty">No agents have reported yet.<br>Tap "connect" to add one.</div>
 
   <div id="backdrop"></div>
@@ -307,35 +327,49 @@
   }
 
   // resting size is fixed: 88px, per the design. Eggs never shrink below
-  // it - when the cluster outgrows the screen, the field grows and scrolls.
+  // it - when one screen cannot hold the cluster, agents paginate.
   var EGG_SIZE = 88;
+  var pageIx = 0;
 
   function layout(list) {
     var W = spawn.clientWidth, H = spawn.clientHeight;
-    var n = list.length;
-    if (!n) { fieldEl.style.width = '100%'; fieldEl.style.height = '100%'; return []; }
-    // golden-angle phyllotaxis cluster around the center; spacing keeps
-    // 88px circles clear of each other even when dense
-    var spacing = 164;
-    var pts = list.map(function (a, i) {
-      var idx = i + 1;
-      var angle = idx * 2.399963; // golden angle
-      var r = n === 1 ? 0 : spacing * Math.sqrt(idx) * 0.62;
-      return { agent: a, dx: r * Math.cos(angle), dy: r * Math.sin(angle) * 0.7 };
+    fieldEl.style.width = '100%'; fieldEl.style.height = '100%';
+    if (!list.length) { renderPager(0); return []; }
+    var SX = 104, SY = 102; // center distances: 88px circles + clear gaps
+    var cols = Math.max(1, Math.floor((W - 24) / SX));
+    var rows = Math.max(1, Math.floor((H - 16) / SY));
+    var cap = cols * rows;
+    var pages = Math.max(1, Math.ceil(list.length / cap));
+    if (pageIx > pages - 1) pageIx = pages - 1;
+    var slice = list.slice(pageIx * cap, (pageIx + 1) * cap);
+    var n = slice.length;
+    var usedRows = Math.ceil(n / cols);
+    var gridH = (usedRows - 1) * SY;
+    var y0 = H / 2 - gridH / 2;
+    var pts = slice.map(function (a, i) {
+      var r = Math.floor(i / cols), c = i % cols;
+      var rowCount = Math.min(cols, n - r * cols);
+      var rx0 = W / 2 - ((rowCount - 1) * SX) / 2;
+      return { agent: a, x: rx0 + c * SX, y: y0 + r * SY, size: EGG_SIZE };
     });
-    var maxX = 0, maxY = 0;
-    pts.forEach(function (p) {
-      maxX = Math.max(maxX, Math.abs(p.dx));
-      maxY = Math.max(maxY, Math.abs(p.dy));
-    });
-    var margin = EGG_SIZE / 2 + 14;
-    var fieldW = Math.max(W, 2 * (maxX + margin));
-    var fieldH = Math.max(H, 2 * (maxY + margin));
-    fieldEl.style.width = fieldW + 'px';
-    fieldEl.style.height = fieldH + 'px';
-    var cx = fieldW / 2, cy = fieldH / 2;
-    pts.forEach(function (p) { p.x = cx + p.dx; p.y = cy + p.dy; p.size = EGG_SIZE; });
+    renderPager(pages);
     return pts;
+  }
+
+  function renderPager(pages) {
+    var pager = document.getElementById('pager');
+    var dots = document.getElementById('pg-dots');
+    if (pages < 2) { pager.classList.remove('show'); dots.innerHTML = ''; return; }
+    pager.classList.add('show');
+    var html = '';
+    for (var i = 0; i < pages; i++) html += '<button type="button" class="dot' + (i === pageIx ? ' on' : '') + '" data-pg="' + i + '" aria-label="Page ' + (i + 1) + '"></button>';
+    dots.innerHTML = html;
+    Array.prototype.forEach.call(dots.querySelectorAll('.dot'), function (d) {
+      d.addEventListener('click', function () {
+        pageIx = parseInt(d.getAttribute('data-pg'), 10) || 0;
+        if (current) render(current);
+      });
+    });
   }
 
   // eggs are keyed by agent id and updated in place, so position, size and
@@ -425,6 +459,12 @@
   document.getElementById('connect-btn').addEventListener('click', function () {
     openPanel(connectPanel);
   });
+  document.getElementById('pg-prev').addEventListener('click', function () {
+    if (pageIx > 0) { pageIx--; if (current) render(current); }
+  });
+  document.getElementById('pg-next').addEventListener('click', function () {
+    pageIx++; if (current) render(current); // layout clamps to the last page
+  });
 
   // --- private instances over MQTT ----------------------------------------
   // An instance is a random id + key from the connect button. Each agent
@@ -489,6 +529,7 @@
     current = null;
     eggEls = {};
     fieldEl.innerHTML = '';
+    pageIx = 0;
     countsEl.textContent = '';
     emptyEl.innerHTML = esc(why);
     emptyEl.style.display = 'flex';
@@ -534,7 +575,7 @@
     current = null;
     eggEls = {};
     fieldEl.innerHTML = '';
-    spawn.scrollTop = 0; spawn.scrollLeft = 0;
+    pageIx = 0;
     countsEl.textContent = '';
     emptyEl.style.display = 'none';
   }

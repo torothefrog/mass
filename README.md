@@ -15,10 +15,13 @@ accounts, no server of your own, no git access needed.
 1. Open the dashboard, tap **connect**, then **Create my instance**. The
    page generates a random instance id and key locally in your browser.
    Nothing is sent anywhere.
-2. You get a view link: `.../mass/?i=<id>#k=<key>`, and one command for
-   your agents. Give any agent the command plus this README's URL - the
-   agent runs it whenever its status changes.
-3. Agents publish small encrypted status messages
+2. You get a view link: `.../mass/?i=<id>#k=<key>`. Keep the whole link -
+   it is both your dashboard and your pairing key.
+3. To add an agent, give it **one thing: this README's URL**
+   (<https://raw.githubusercontent.com/torothefrog/mass/main/README.md>).
+   The agent follows the steps below; its helper script then asks *you*
+   for your dashboard link, once.
+4. Agents publish small encrypted status messages
    (`working` / `idle` / `waiting` / `offline`, one line of text) through a
    public MQTT relay to `mass/<id>/<agent-id>`. The page subscribes to your
    instance's topics and draws one egg per agent. Each agent has its own
@@ -71,27 +74,54 @@ relay, that is the upgrade path.
 
 ## Connect an agent (about a minute)
 
-```bash
-# once, to get the script (or just read it - it is one file):
-git clone https://github.com/torothefrog/mass.git
-cd mass
+The only thing you hand an agent is this instruction URL:
 
-# report status - from any directory, any number of times:
-MASS_INSTANCE=<your id> MASS_KEY=<your key> \
-  ./mass-update.sh --id my-agent --name "My Agent" \
+```
+https://raw.githubusercontent.com/torothefrog/mass/main/README.md
+```
+
+An agent reading this file should:
+
+```bash
+# 1. get the helper (one file, readable end to end):
+curl -sLO https://raw.githubusercontent.com/torothefrog/mass/main/mass-update.sh
+chmod +x mass-update.sh
+
+# 2. report status - from any directory, any number of times:
+./mass-update.sh --id my-agent --name "My Agent" \
   --state working --message "Reading the tickets sheet"
 ```
 
-Prerequisites on the agent's machine: bash, python3, openssl. No git, no
-GitHub account, no repo access.
+**The first run asks for your dashboard link.** The script prints
+"Paste your Mass dashboard link" and reads it through a password-style
+prompt (input hidden). Paste the WHOLE link, `.../mass/?i=<id>#k=<key>` -
+the script extracts the id and key itself and remembers the pairing in
+`~/.mass/pairing` (chmod 600), so later runs and the heartbeat never ask
+again. If the machine already knows the instance, pasting just the key
+works too.
+
+Rules for the human holding the link:
+
+- Paste your dashboard link **only into a secure prompt your agent shows
+  you** - a password-style input or a secret store, never into a chat
+  message, an issue, or a web form. Some agents will show their own
+  secure vault prompt for it; same rule.
+- Anyone with the full link can read the instance AND post as any agent
+  in it, so treat it like a password.
+- Non-interactive setups (cron, CI) can pass
+  `MASS_LINK='<full link>'` or `MASS_INSTANCE` + `MASS_KEY` instead of
+  the prompt. Set `MASS_NO_SAVE=1` to skip writing `~/.mass/pairing`.
+
+Prerequisites on the agent's machine: bash, python3, openssl, curl. No
+git, no GitHub account, no repo access.
 
 - Heartbeat: while active, re-run at least every 5 minutes; entries older
   than 10 minutes render as stale. On shutdown, post `--state offline`.
 - Only ever write your own `--id` topic. Keep `name`/`message`/`task`
   short and free of secrets even though payloads are encrypted:
   ciphertext outlives keys, and keys leak.
-- `MASS_KEY` is a secret. Never commit it, paste it in chat, or put it in
-  a status message.
+- Your key is a secret. Never commit it, paste it in chat, or put it in
+  a status message. The helper never prints it.
 
 ### States
 

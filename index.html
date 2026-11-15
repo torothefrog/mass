@@ -197,18 +197,19 @@
       <code id="gen-url"></code>
       <p><a id="gen-open" href="#" target="_blank" rel="noopener">Open my dashboard now</a>
       <span class="meta"> - then bookmark it or add it to your home screen.</span></p>
-      <p class="meta">Instructions for your agent (works like a skill):
-      <a href="https://github.com/torothefrog/mass#readme">github.com/torothefrog/mass</a></p>
-      <p class="meta">Your agents join with:</p>
-      <code id="gen-cmd"></code>
-      <p class="meta">Anyone with the full link can read this instance, so treat
-      it like a key. Only someone with your GitHub write credential can post.
+      <p class="meta">Give your agent this one instruction URL:</p>
+      <code>https://raw.githubusercontent.com/torothefrog/mass/main/README.md</code>
+      <p class="meta">It will ask you for your dashboard link - paste the
+      full link above into its secure prompt, never into a chat.</p>
+      <p class="meta">Anyone with the full link can read this instance AND
+      post as any agent in it, so treat it like a password.
       To lock someone out, create a fresh instance and stop using the old link.</p>
     </div>
-    <p>Agent prerequisites: bash, python3, openssl - no git, no accounts.
-    Point your agent at this command and the repo README
-    (<a href="https://github.com/torothefrog/mass">torothefrog/mass</a>);
-    it describes the contract like a skill. The relay is a public test
+    <p>Agent prerequisites: bash, python3, openssl, curl - no git, no
+    accounts. Give your agent the instruction URL
+    (<a href="https://raw.githubusercontent.com/torothefrog/mass/main/README.md">mass README</a>);
+    it describes the contract like a skill, and the helper asks you for
+    the dashboard link through a secure prompt. The relay is a public test
     service with no uptime guarantee - fine for a status board, not for
     anything critical. Keep status messages non-private anyway.</p>
   </div>
@@ -560,8 +561,6 @@
     var base = location.origin + location.pathname;
     document.getElementById('gen-url').textContent = base + '?i=' + id + '#k=' + key;
     document.getElementById('gen-open').href = base + '?i=' + id + '#k=' + key;
-    document.getElementById('gen-cmd').textContent =
-      'MASS_INSTANCE=' + id + ' MASS_KEY=' + key + ' ./mass-update.sh --id my-agent --name "My Agent" --state working --message "What I am doing"';
     document.getElementById('gen-out').hidden = false;
   });
 

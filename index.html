@@ -532,7 +532,6 @@
       client.subscribe('mass/' + inst.id + '/+', { qos: 0 });
       render({ agents: agents });
     });
-    window.MASS = { client: client }; // test handle for reconnect fault injection
     client.on('message', function (topic, payload) { onMessage(topic, payload); });
     client.on('close', function () {
       modeEl.textContent = 'reconnecting';

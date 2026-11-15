@@ -4,66 +4,77 @@ A mass of frogspawn. Every egg is an agent.
 
 **Dashboard:** https://torothefrog.github.io/mass/
 
-Mass is a zero-backend, mobile-first page that shows what your agents are
-doing right now: working, idle, waiting on something, or offline. It is a
-static site on GitHub Pages - and a **public app with private instances**.
-You create your own instance from the dashboard's connect button, pair only
-your agents with it, and other people's instances stay theirs.
+Mass is a mobile-first page that shows what your agents are doing right
+now: working, idle, waiting on something, or offline. It is a **public app
+with private instances**: anyone can open the dashboard, create their own
+instance, pair only their own agents, and nobody else can read it. No
+accounts, no server of your own, no git access needed.
+
+## How it works
+
+1. Open the dashboard, tap **connect**, then **Create my instance**. The
+   page generates a random instance id and key locally in your browser.
+   Nothing is sent anywhere.
+2. You get a view link: `.../mass/?i=<id>#k=<key>`, and one command for
+   your agents. Give any agent the command plus this README's URL - the
+   agent runs it whenever its status changes.
+3. Agents publish small encrypted status messages
+   (`working` / `idle` / `waiting` / `offline`, one line of text) through a
+   public MQTT relay to `mass/<id>/<agent-id>`. The page subscribes to your
+   instance's topics and draws one egg per agent. Each agent has its own
+   topic, so agents reporting at the same time never overwrite each other.
+
+It is a status board, not a data channel: "needs your attention" and a
+short line, not task contents.
 
 ## Privacy model (read this before trusting it)
 
-- Your instance link looks like
-  `https://torothefrog.github.io/mass/?i=<instance id>#k=<key>`.
-- Everything your agents post is stored **encrypted** at
-  `instances/<id>.json` in this repo: AES-256-CBC with HMAC-SHA256
-  (encrypt-then-MAC), keys derived from your key with SHA-256.
-- The key lives only in the part of the link after `#`. Browsers never send
-  the fragment to any server, so GitHub Pages (and anyone reading this
-  public repo) ever sees only ciphertext, the random instance id, and
-  update times.
-- **Reading** an instance requires the full link with the key. Treat the
-  link like a password: anyone who has it can read that instance.
-- **Writing** requires a GitHub credential with push access to this repo,
-  so strangers cannot post to your instance even if they guess its id.
-- **Revocation:** to lock someone out, create a fresh instance (new id, new
-  key) and stop updating the old one. Old ciphertext stays in git history
-  but stays unreadable without its key - so still keep `name`/`message`/
-  `task` free of secrets, since ciphertext outlives keys.
-- What this does NOT hide: that your instance exists, how often it updates,
-  and roughly how big the payload is. An instance id in a link you share is
-  visible to anyone you share it with.
+- Messages are encrypted **before** they leave the agent: AES-256-CBC with
+  HMAC-SHA256 (encrypt-then-MAC; separate encryption and MAC keys derived
+  from your key with SHA-256; fresh random IV per message; the MAC also
+  covers the instance id so ciphertext cannot be transplanted between
+  instances; a per-agent monotonic sequence number lets readers drop
+  replayed older messages). We use this standard composition rather than
+  AES-GCM because the openssl command line that agents already have
+  provides no AEAD mode; the construction is reviewed in the code, but we
+  make no formal security-audit claim.
+- The key lives only in the part of your link after `#`, which browsers
+  never send to any server, and in the agents you paired. The relay, the
+  repo host, and anyone else see only ciphertext, topic names (which
+  contain the random instance id), and timing.
+- **The key is the only credential.** Anyone who has the full link can
+  read the instance AND can publish valid messages as any agent in it.
+  There is no per-agent identity or per-agent revocation: to retire a
+  compromised instance, create a fresh one and stop using the old link.
+  Old messages stay readable to anyone who ever had the old key.
+- What this does NOT hide: that your instance exists, how many agents it
+  has, when they post, and message sizes.
+- The page loads its MQTT client from a file vendored in this repo
+  (`mqtt.min.js`), never a CDN, so no third-party script can read the key
+  from your link. The page also sends no referrer.
 
-This is real encryption, not a secret-looking URL: the stored data is
-ciphertext and the decryption key never reaches the server. If you need
-stronger guarantees (hidden metadata, server-side access control, audit
-logs), Mass would need a real backend, which it deliberately does not have.
+## The relay (and its limits)
+
+Default relay: the Eclipse Foundation's public test broker
+`test.mosquitto.org` (MQTT over TLS). Its own terms
+(<https://test.mosquitto.org/>): free to use for any application, but
+**"do not abuse or rely upon it for anything of importance"**; it warns
+that availability and TLS/WebSocket support can be interrupted, that
+anyone can publish or subscribe to any topic (your payloads stay
+ciphertext, forged ones fail verification), and not to publish anything
+sensitive. Treat Mass as a prototype dashboard, not critical monitoring.
+
+The relay is replaceable: point agents at your own broker with
+`MASS_BROKER=host:port` and change `BROKER_URL` in `index.html`
+(Mosquitto is open source and runs anywhere). If you outgrow the public
+relay, that is the upgrade path.
 
 ## Connect an agent (about a minute)
 
-### 1. Create your instance
-
-Open the dashboard, tap **connect**, then **Create my instance**. The page
-generates a random instance id and key locally in your browser - nothing is
-sent anywhere - and shows you your view link and the agent command.
-
-### 2. Prerequisites on the machine the agent runs on
-
-- bash, git, python3, openssl
-- a GitHub credential with **write access to this repo**: a fine-grained
-  personal access token with `Contents: Read and write` on
-  `torothefrog/mass`, or a collaborator account. The repo is public for
-  reading but owner-locked for writing.
-
-### 3. Report status
-
 ```bash
-# once, to get the script:
+# once, to get the script (or just read it - it is one file):
 git clone https://github.com/torothefrog/mass.git
 cd mass
-
-# give the script a credential - either configure your git credential
-# helper/ssh as usual, or:
-export MASS_REPO_URL="https://<token>@github.com/torothefrog/mass.git"
 
 # report status - from any directory, any number of times:
 MASS_INSTANCE=<your id> MASS_KEY=<your key> \
@@ -71,44 +82,16 @@ MASS_INSTANCE=<your id> MASS_KEY=<your key> \
   --state working --message "Reading the tickets sheet"
 ```
 
-How the script behaves, exactly:
+Prerequisites on the agent's machine: bash, python3, openssl. No git, no
+GitHub account, no repo access.
 
-- It keeps its own working clone of the `gh-pages` branch (the branch GitHub
-  Pages serves) in `~/.mass/mass`, so after the first run you invoke it from
-  anywhere and it is fast.
-- It decrypts your instance file with your key, updates only your own
-  `--id` entry, re-encrypts, commits, and pushes with fetch/rebase retries,
-  so two agents reporting at the same time do not overwrite each other. If
-  it cannot land cleanly it exits non-zero instead of silently dropping the
-  update.
-- `MASS_KEY` is a secret. It is used only locally, to encrypt and decrypt
-  your instance file. Do not commit it, paste it in chat, or put it in a
-  status message.
-- Credential note: a token embedded in `MASS_REPO_URL` is stored in
-  `~/.mass/mass/.git/config`, like any git remote. Prefer a credential
-  helper, or a fine-grained token limited to this one repo.
-
-### No shell? Any git client works
-
-The contract is just the envelope: `instances/<id>.json` on the `gh-pages`
-branch, holding JSON `{"v":1,"iv":...,"ct":...,"tag":...}` where `ct` is
-AES-256-CBC ciphertext of the plaintext below, keyed as described above.
-`updated` is UTC ISO 8601.
-
-```json
-{
-  "agents": {
-    "my-agent": {
-      "name": "My Agent",
-      "state": "working",
-      "message": "Reading the tickets sheet",
-      "task": "TKT-010",
-      "url": "",
-      "updated": "2026-11-15T20:30:00Z"
-    }
-  }
-}
-```
+- Heartbeat: while active, re-run at least every 5 minutes; entries older
+  than 10 minutes render as stale. On shutdown, post `--state offline`.
+- Only ever write your own `--id` topic. Keep `name`/`message`/`task`
+  short and free of secrets even though payloads are encrypted:
+  ciphertext outlives keys, and keys leak.
+- `MASS_KEY` is a secret. Never commit it, paste it in chat, or put it in
+  a status message.
 
 ### States
 
@@ -119,35 +102,18 @@ AES-256-CBC ciphertext of the plaintext below, keyed as described above.
 | `waiting` | blocked on a human or an external reply  | amber                |
 | `offline` | done for now / shut down                 | dim gray             |
 
-## Rules
-
-- **Only write your own key.** Never edit or delete another agent's entry.
-- **Keep it non-private anyway.** No secrets, tokens, private user data, or
-  message contents in `name`, `message`, `task` or `url`. Encryption
-  reduces exposure; it is not a license to post secrets.
-- **Heartbeat.** While active, update at least every 5 minutes. On shutdown,
-  post `--state offline`.
-- The page polls every 20 seconds, but GitHub Pages deploys take about a
-  minute after a push, so expect roughly a minute of lag.
-
-## How it works
+## Repo layout
 
 - `index.html` - the whole dashboard (layout, spawn cluster, detail sheet,
-  instance decryption with WebCrypto). Reads `instances/<id>.json` from the
-  same origin, no external calls; the key never leaves the browser.
-- `instances/` - per-instance encrypted status stores on the `gh-pages`
-  branch.
-- `mass-update.sh` - optional helper that does the encrypt-and-git dance.
-- No build step. GitHub Pages serves the `gh-pages` branch root as-is.
-  `main` carries the same site source; when the site code changes, push it
-  to both branches.
+  MQTT subscription, WebCrypto decryption).
+- `mqtt.min.js` - vendored MQTT.js client (v5.10.1), self-hosted so no
+  third-party script can read your key.
+- `mass-update.sh` - the agent-side status publisher (stdlib-only MQTT
+  over TLS + openssl encryption).
+- No build step. GitHub Pages serves the `gh-pages` branch; `main`
+  carries the same source.
 
 Browse mode: opened without an instance link, the page shows a clearly
-labeled demo cluster so the design is visible. An instance link without its
-`#k=` key shows a locked page, never data.
-
-## Roadmap (not built yet)
-
-- Optional MQTT/WebSocket push channel for sub-second updates, with real
-  broker auth per instance.
-- Egg history (recent status changes per agent).
+labeled demo cluster with fictional agents. An instance link without its
+`#k=` key shows a locked page, never data. Switching links wipes the
+previous instance's data from the page.

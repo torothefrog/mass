@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta name="referrer" content="no-referrer">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Mass - torothefrog's agents, live</title>
@@ -205,6 +206,7 @@
     Status messages still stay non-private.</p>
   </div>
 
+<script src="mqtt.min.js"></script>
 <script>
 (function () {
   'use strict';
@@ -214,9 +216,9 @@
 
   var DEMO = {
     agents: {
-      "demo-tickets": { name: "Tickets watch", state: "working", message: "Scanning the TICKETS sheet for new edits", task: "Hourly sweep", updated: null, url: "" },
-      "demo-pond":    { name: "Pond builder", state: "idle", message: "Waiting for the next page request", task: "", updated: null, url: "" },
-      "demo-news":    { name: "News feed", state: "waiting", message: "Needs a pick for the 21:00 slot", task: "Slovenia feed", updated: null, url: "" }
+      "demo-quill":  { name: "Quill", state: "working", message: "Drafting a short story", task: "Chapter 2", updated: null, url: "" },
+      "demo-pebble": { name: "Pebble", state: "idle", message: "Waiting for the next idea", task: "", updated: null, url: "" },
+      "demo-scout":  { name: "Scout", state: "waiting", message: "Needs a map pick for tonight", task: "Trail check", updated: null, url: "" }
     }
   };
 
@@ -390,11 +392,17 @@
     openPanel(connectPanel);
   });
 
-  // --- private instances: encrypted status blobs -----------------------
-  // The view link is mass/?i=<instance id>#k=<key>. The key sits in the URL
-  // fragment, which browsers never send to any server; the file on Pages is
-  // AES-256-CBC + HMAC-SHA256 ciphertext. Reading without the key is not
-  // possible; writing additionally needs push access to the repo.
+  // --- private instances over MQTT ----------------------------------------
+  // An instance is a random id + key from the connect button. Each agent
+  // publishes ONE retained MQTT message to mass/<instance>/<agent-id> on a
+  // public relay; this page subscribes to mass/<instance>/+. Per-agent
+  // topics mean two agents reporting at once never overwrite each other.
+  // Payloads are encrypted (AES-256-CBC + HMAC-SHA256, encrypt-then-MAC,
+  // separate derived keys, MAC binds the instance id, per-agent monotonic
+  // seq drops replays). The key lives only after # in the link and is never
+  // sent to any server. The relay sees ciphertext, topic names and timing.
+
+  var BROKER_URL = 'wss://test.mosquitto.org:8081/mqtt'; // public test relay, no SLA - see README
 
   function b64urlToBytes(s) {
     var b64 = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -421,9 +429,6 @@
     return { id: p.get('i'), key: m ? m[1] : null };
   }
 
-  var inst = getInstance();
-  var instKeys = null;
-
   async function loadKeys(b64urlKey) {
     var raw = b64urlToBytes(b64urlKey);
     var encHash = await crypto.subtle.digest('SHA-256', concatText(raw, ':enc'));
@@ -433,10 +438,11 @@
     return { enc: enc, mac: mac };
   }
 
-  async function decryptEnvelope(env, keys) {
+  async function decryptEnvelope(env, keys, instanceId) {
     var iv = b64ToBytes(env.iv), ct = b64ToBytes(env.ct), tag = b64ToBytes(env.tag);
-    var data = new Uint8Array(iv.length + ct.length);
-    data.set(iv); data.set(ct, iv.length);
+    var idb = new TextEncoder().encode(instanceId);
+    var data = new Uint8Array(idb.length + iv.length + ct.length);
+    data.set(idb); data.set(iv, idb.length); data.set(ct, idb.length + iv.length);
     var ok = await crypto.subtle.verify('HMAC', keys.mac, tag, data);
     if (!ok) throw new Error('bad tag');
     var plain = await crypto.subtle.decrypt({ name: 'AES-CBC', iv: iv }, keys.enc, ct);
@@ -454,26 +460,92 @@
     checkedEl.textContent = '';
   }
 
-  async function fetchStatus() {
+  // live session state - holds decrypted plaintext, wiped on any link change
+  var inst = null;
+  var instKeys = null;
+  var client = null;
+  var agents = {};
+  var lastSeq = {};
+  var seenMessages = 0;
+  var verifiedMessages = 0;
+
+  async function onMessage(topic, payload) {
+    var agentId = topic.split('/').pop();
+    seenMessages++;
+    try {
+      var env = JSON.parse(new TextDecoder().decode(payload));
+      var data = await decryptEnvelope(env, instKeys, inst.id);
+      if (!data.agent || data.agent.id !== agentId) return; // topic/payload mismatch
+      var seq = (typeof data.seq === 'number') ? data.seq : 0;
+      if (seq < (lastSeq[agentId] || 0)) return; // replayed older status
+      lastSeq[agentId] = seq;
+      verifiedMessages++;
+      agents[agentId] = data.agent;
+      render({ agents: agents });
+      checkedEl.textContent = 'updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    } catch (e) {
+      if (verifiedMessages === 0) {
+        enterLocked('Messages are arriving, but this key cannot read them. Open the full link, including the part after #.');
+      }
+    }
+  }
+
+  function teardown() {
+    if (client) { try { client.end(true); } catch (e) {} client = null; }
+    agents = {}; lastSeq = {};
+    seenMessages = 0; verifiedMessages = 0;
+    instKeys = null;
+    current = null;
+    spawn.innerHTML = '';
+    countsEl.textContent = '';
+    emptyEl.style.display = 'none';
+  }
+
+  async function start() {
+    inst = getInstance();
     if (!inst.id) { enterDemo('browse mode - open your instance link to see your agents'); return; }
     if (!inst.key) { enterLocked('This instance is private. Open your full link, including the part after #.'); return; }
     try {
-      if (!instKeys) instKeys = await loadKeys(inst.key);
-      var r = await fetch('instances/' + encodeURIComponent(inst.id) + '.json?ts=' + Date.now(), { cache: 'no-store' });
-      if (!r.ok) throw new Error('http ' + r.status);
-      var data = await decryptEnvelope(await r.json(), instKeys);
-      var list = normalize(data);
+      instKeys = await loadKeys(inst.key);
+    } catch (e) {
+      enterLocked('This key cannot be read. Check the full link.');
+      return;
+    }
+    modeEl.textContent = 'connecting';
+    modeEl.classList.add('demo');
+    checkedEl.textContent = '';
+    client = mqtt.connect(BROKER_URL, {
+      reconnectPeriod: 4000,
+      connectTimeout: 10000,
+      clean: true
+    });
+    client.on('connect', function () {
       modeEl.textContent = 'LIVE';
       modeEl.classList.remove('demo');
-      render(data);
-      checkedEl.textContent = 'checked ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-      if (list.length === 0) {
-        emptyEl.innerHTML = 'No agents have reported yet.<br>Tap "connect" to add one.';
-      }
-    } catch (e) {
-      enterLocked('Could not open this instance. Wrong key, or the status file is unreachable.');
-    }
+      client.subscribe('mass/' + inst.id + '/+', { qos: 0 });
+      render({ agents: agents });
+    });
+    client.on('message', function (topic, payload) { onMessage(topic, payload); });
+    client.on('close', function () {
+      modeEl.textContent = 'reconnecting';
+      modeEl.classList.add('demo');
+    });
+    client.on('error', function () {
+      modeEl.textContent = 'relay error';
+      modeEl.classList.add('demo');
+    });
   }
+
+  // switching the link (hash edit, back/forward) must never leave the
+  // previous instance's plaintext on screen
+  function restartIfChanged() {
+    var next = getInstance();
+    if (inst && next.id === inst.id && next.key === inst.key) return;
+    teardown();
+    start();
+  }
+  window.addEventListener('hashchange', restartIfChanged);
+  window.addEventListener('popstate', restartIfChanged);
 
   document.getElementById('gen-instance').addEventListener('click', function () {
     var id = bytesToB64url(crypto.getRandomValues(new Uint8Array(16)));
@@ -484,8 +556,6 @@
       'MASS_INSTANCE=' + id + ' MASS_KEY=' + key + ' ./mass-update.sh --id my-agent --name "My Agent" --state working --message "What I am doing"';
     document.getElementById('gen-out').hidden = false;
   });
-
-  fetchStatus();
 
   function enterDemo(why) {
     modeEl.textContent = 'DEMO';
@@ -502,8 +572,7 @@
 
   window.addEventListener('resize', function () { if (current) render(current); });
 
-  fetchStatus();
-  setInterval(fetchStatus, REFRESH_MS);
+  start();
   setInterval(function () { if (current) render(current); }, 30000);
 })();
 </script>

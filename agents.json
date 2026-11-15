@@ -1,12 +1,12 @@
 {
   "agents": {
     "mass-builder": {
-      "name": "Mass builder",
-      "state": "idle",
-      "message": "Mass v1 shipped and verified live",
-      "task": "Mass v1",
+      "name": "Mass builder (deploy proof)",
+      "state": "offline",
+      "message": "One-time proof from the v1 build, not a live agent. Goes stale and stays dim.",
+      "task": "",
       "url": "",
-      "updated": "2026-11-15T20:02:52Z"
+      "updated": "2026-11-15T20:06:25Z"
     }
   }
 }

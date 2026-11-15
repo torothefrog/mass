@@ -2,11 +2,11 @@
   "agents": {
     "mass-builder": {
       "name": "Mass builder",
-      "state": "working",
-      "message": "Verifying the first live deploy",
+      "state": "idle",
+      "message": "Mass v1 shipped and verified live",
       "task": "Mass v1",
-      "url": "https://github.com/torothefrog/mass",
-      "updated": "2026-11-15T20:00:47Z"
+      "url": "",
+      "updated": "2026-11-15T20:02:52Z"
     }
   }
 }

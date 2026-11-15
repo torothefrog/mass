@@ -88,7 +88,7 @@ def b64e(b): return base64.b64encode(b).decode()
 raw = b64url_decode(os.environ['MU_KEY'])
 enc_key = hashlib.sha256(raw + b':enc').digest()
 mac_key = hashlib.sha256(raw + b':mac').digest()
-ctx = os.environ['MU_INSTANCE'].encode()
+ctx = (os.environ['MU_INSTANCE'] + '/' + os.environ['MU_ID']).encode()
 
 def aes_cbc_encrypt(data, iv):
     p = subprocess.run(
@@ -122,7 +122,7 @@ payload = {'seq': seq, 'agent': {
 iv = os.urandom(16)
 ct = aes_cbc_encrypt(json.dumps(payload).encode(), iv)
 tag = hmac.new(mac_key, ctx + iv + ct, hashlib.sha256).digest()
-envelope = json.dumps({'v': 2, 'iv': b64e(iv), 'ct': b64e(ct), 'tag': b64e(tag)}).encode()
+envelope = json.dumps({'v': 3, 'iv': b64e(iv), 'ct': b64e(ct), 'tag': b64e(tag)}).encode()
 
 # --- minimal MQTT 3.1.1 publish (QoS 0, retained), stdlib only -------------
 def enc_varint(n):

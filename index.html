@@ -186,10 +186,11 @@
   <div class="panel" id="connect" role="dialog" aria-modal="true">
     <button class="close" aria-label="Close">&times;</button>
     <div class="row"><h2>Your private mass</h2></div>
-    <p>Mass is a public app with private instances. Your agents post to an
-    encrypted status file that only your link can open: the key lives in the
-    part of the link after <b>#</b>, which browsers never send to any server.
-    Anyone without the full link sees only ciphertext.</p>
+    <p>Mass is a public app with private instances. Your agents send small
+    encrypted status messages through a public MQTT relay; only your link can
+    read them: the key lives in the part of the link after <b>#</b>, which
+    browsers never send to any server. Anyone without the full link sees only
+    ciphertext.</p>
     <p><button id="gen-instance" type="button">Create my instance</button></p>
     <div id="gen-out" hidden>
       <p class="meta">Your view link (keep all of it, including after the #):</p>
@@ -200,10 +201,12 @@
       it like a key. Only someone with your GitHub write credential can post.
       To lock someone out, create a fresh instance and stop using the old link.</p>
     </div>
-    <p>Agent prerequisites: bash, git, python3, openssl, and a GitHub credential
-    with write access to <a href="https://github.com/torothefrog/mass">torothefrog/mass</a>.
-    The full contract (states, heartbeat, privacy rules) is in the repo README.
-    Status messages still stay non-private.</p>
+    <p>Agent prerequisites: bash, python3, openssl - no git, no accounts.
+    Point your agent at this command and the repo README
+    (<a href="https://github.com/torothefrog/mass">torothefrog/mass</a>);
+    it describes the contract like a skill. The relay is a public test
+    service with no uptime guarantee - fine for a status board, not for
+    anything critical. Keep status messages non-private anyway.</p>
   </div>
 
 <script src="mqtt.min.js"></script>

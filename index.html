@@ -33,9 +33,7 @@
   html, body { height: 100%; }
   body {
     font-family: 'Roboto Mono', ui-monospace, monospace;
-    background:
-      radial-gradient(ellipse 90% 60% at 50% -20%, rgba(46, 139, 87, 0.28), transparent),
-      var(--pond-deep);
+    background: var(--pond-deep);
     color: var(--text);
     line-height: 1.5;
     /* single screen, no scrolling - this is a dashboard, not a page */
@@ -83,40 +81,52 @@
     position: relative;
     min-height: 0;
   }
+  /* flat circles: the border carries the status, text stays inside */
   .egg {
     position: absolute; transform: translate(-50%, -50%);
     border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    cursor: pointer; border: 1px solid rgba(232,245,233,0.14);
-    background:
-      radial-gradient(circle at 34% 28%, rgba(255,255,255,0.28), transparent 42%),
-      radial-gradient(circle at 50% 55%, rgba(126,224,129,0.30), rgba(18,51,36,0.9) 78%);
-    transition: box-shadow 0.3s ease, filter 0.3s ease;
+    cursor: pointer;
+    border: 3px solid rgba(126, 224, 129, 0.45);
+    background: var(--pond);
+    transition: left 0.6s ease, top 0.6s ease, width 0.6s ease, height 0.6s ease,
+                border-color 0.3s ease, opacity 0.3s ease;
     -webkit-tap-highlight-color: transparent;
     padding: 0; font: inherit; color: inherit;
   }
-  .egg .glyph { font-size: 15px; color: rgba(232,245,233,0.85); text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+  .egg .cell {
+    font-size: 11px; color: var(--text); text-align: center;
+    padding: 0 8px; overflow: hidden; max-width: 100%;
+    white-space: nowrap; text-overflow: ellipsis; pointer-events: none;
+  }
   .egg[data-state="working"] {
-    box-shadow: 0 0 18px rgba(126,224,129,0.45), 0 0 42px rgba(126,224,129,0.18);
-    animation: pulse 2.2s ease-in-out infinite;
+    border-color: var(--frog);
+    animation: borderPulse 2.2s ease-in-out infinite;
   }
-  .egg[data-state="idle"] { box-shadow: 0 0 10px rgba(126,224,129,0.22); }
-  .egg[data-state="waiting"] {
-    background:
-      radial-gradient(circle at 34% 28%, rgba(255,255,255,0.28), transparent 42%),
-      radial-gradient(circle at 50% 55%, rgba(242,211,139,0.34), rgba(18,51,36,0.9) 78%);
-    box-shadow: 0 0 16px rgba(242,211,139,0.35);
-  }
-  .egg[data-state="offline"], .egg.stale { filter: grayscale(0.8) brightness(0.55); }
+  .egg[data-state="idle"]    { border-color: rgba(126, 224, 129, 0.45); }
+  .egg[data-state="waiting"] { border-color: var(--amber); }
+  .egg[data-state="offline"] { border-color: rgba(159, 200, 170, 0.3); opacity: 0.5; }
+  .egg.stale { border-style: dashed; opacity: 0.55; }
   .egg:active { filter: brightness(1.25); }
-  @keyframes pulse {
-    0%, 100% { box-shadow: 0 0 14px rgba(126,224,129,0.35), 0 0 34px rgba(126,224,129,0.12); }
-    50% { box-shadow: 0 0 26px rgba(126,224,129,0.6), 0 0 60px rgba(126,224,129,0.25); }
+  @keyframes borderPulse {
+    0%, 100% { border-color: rgba(126, 224, 129, 1); }
+    50%      { border-color: rgba(126, 224, 129, 0.4); }
   }
-  .egg-label {
-    position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%);
-    font-size: 10px; color: var(--muted); white-space: nowrap; pointer-events: none;
+  /* an event (new status) grows the circle, then it settles back to base size */
+  @keyframes bump {
+    0%   { transform: translate(-50%, -50%) scale(1); }
+    18%  { transform: translate(-50%, -50%) scale(1.55); }
+    100% { transform: translate(-50%, -50%) scale(1); }
   }
+  .egg.bump { animation: bump 2.8s cubic-bezier(0.2, 0.8, 0.25, 1); }
+  .egg[data-state="working"].bump {
+    animation: bump 2.8s cubic-bezier(0.2, 0.8, 0.25, 1), borderPulse 2.2s ease-in-out infinite;
+  }
+  @keyframes pop {
+    from { transform: translate(-50%, -50%) scale(0); }
+    to   { transform: translate(-50%, -50%) scale(1); }
+  }
+  .egg.enter { animation: pop 0.5s ease-out; }
   #empty {
     position: absolute; inset: 0; display: none;
     align-items: center; justify-content: center; text-align: center;
@@ -266,12 +276,10 @@
     return (Date.now() - t) > STALE_MS;
   }
 
-  function glyphFor(a) {
-    var s = (a.state || '').toLowerCase();
-    if (s === 'working') return '~';
-    if (s === 'waiting') return '!';
-    if (s === 'idle') return 'z';
-    return '?';
+  function cellText(a, size) {
+    var name = String(a.name || a.id || '?');
+    if (size < 56) return name.charAt(0) || '?';
+    return name.length > 12 ? name.slice(0, 11) + '…' : name;
   }
 
   function normalize(data) {
@@ -297,13 +305,13 @@
     var W = spawn.clientWidth, H = spawn.clientHeight;
     var cx = W / 2, cy = H / 2;
     var n = Math.max(list.length, 1);
-    var spacing = Math.min(110, Math.max(58, (Math.min(W, H) * 1.05) / Math.sqrt(n + 1)));
+    var spacing = Math.min(132, Math.max(96, (Math.min(W, H) * 1.05) / Math.sqrt(n + 1)));
     var pts = list.map(function (a, i) {
       var idx = i + 1;
       var angle = idx * 2.399963; // golden angle
       var r = n === 1 ? 0 : spacing * Math.sqrt(idx) * 0.62;
       var rx = Math.min(r, W / 2 - 60);
-      var ry = Math.min(r * 0.82, H / 2 - 50);
+      var ry = Math.min(r * 0.82, H / 2 - 56);
       return {
         agent: a,
         x: cx + rx * Math.cos(angle),
@@ -318,44 +326,57 @@
         if (d < dMin) dMin = d;
       }
     }
-    if (!isFinite(dMin)) dMin = 120;
-    var base = Math.max(34, Math.min(84, dMin * 0.88 - 4));
-    pts.forEach(function (p, i) {
-      // slight size variation only when there is room for it
-      var vary = base > 56 ? (0.94 + ((i * 37) % 5) * 0.03) : 1;
-      p.size = Math.max(34, Math.min(84, base * vary));
-    });
+    if (!isFinite(dMin)) dMin = 200;
+    // target resting size is ~88-96px; only extreme crowds go smaller
+    var size = Math.max(44, Math.min(96, dMin * 0.9 - 6));
+    pts.forEach(function (p) { p.size = size; });
     return pts;
+  }
+
+  // eggs are keyed by agent id and updated in place, so position, size and
+  // status changes animate smoothly instead of rebuilding the cluster
+  var eggEls = {};
+
+  function bump(id) {
+    var egg = eggEls[id];
+    if (!egg) return;
+    egg.classList.remove('bump');
+    void egg.offsetWidth; // restart the animation on a fresh event
+    egg.classList.add('bump');
   }
 
   function render(data) {
     current = data;
     var list = normalize(data);
-    spawn.innerHTML = '';
     emptyEl.style.display = list.length ? 'none' : 'flex';
 
+    var seen = {};
     layout(list).forEach(function (p) {
       var a = p.agent;
-      var egg = document.createElement('button');
-      egg.type = 'button';
-      egg.className = 'egg' + (isStale(a) && a.state !== 'offline' ? ' stale' : '');
+      seen[a.id] = true;
+      var egg = eggEls[a.id];
+      if (!egg) {
+        egg = document.createElement('button');
+        egg.type = 'button';
+        egg.className = 'egg enter';
+        egg.setAttribute('role', 'listitem');
+        egg.addEventListener('click', function () { openDetail(egg._agent); });
+        egg.addEventListener('animationend', function () { egg.classList.remove('enter', 'bump'); });
+        spawn.appendChild(egg);
+        eggEls[a.id] = egg;
+      }
+      egg._agent = a;
       egg.setAttribute('data-state', a.state);
-      egg.setAttribute('role', 'listitem');
+      egg.classList.toggle('stale', isStale(a) && a.state !== 'offline');
       egg.style.left = p.x + 'px';
       egg.style.top = p.y + 'px';
       egg.style.width = p.size + 'px';
-      egg.style.height = (p.size * 1.08) + 'px';
-      var label = '';
-      if (list.length <= 20) {
-        label = (p.size < 50) ? esc(a.name || a.id)
-          : esc(a.name || a.id) + ' &middot; ' + esc(ageText(a.updated));
-      }
-      egg.innerHTML =
-        '<span class="glyph">' + esc(glyphFor(a)) + '</span>' +
-        (label ? '<span class="egg-label">' + label + '</span>' : '');
+      egg.style.height = p.size + 'px';
+      egg.innerHTML = '<span class="cell">' + esc(cellText(a, p.size)) + '</span>';
       egg.setAttribute('aria-label', (a.name || a.id) + ', ' + (a.state || 'unknown') + (a.task ? ', ' + a.task : ''));
-      egg.addEventListener('click', function () { openDetail(a); });
-      spawn.appendChild(egg);
+    });
+    Object.keys(eggEls).forEach(function (id) {
+      if (!seen[id]) { eggEls[id].remove(); delete eggEls[id]; }
     });
 
     var counts = { working: 0, idle: 0, waiting: 0, offline: 0 };
@@ -461,6 +482,7 @@
     modeEl.textContent = 'LOCKED';
     modeEl.classList.add('demo');
     current = null;
+    eggEls = {};
     spawn.innerHTML = '';
     countsEl.textContent = '';
     emptyEl.innerHTML = esc(why);
@@ -490,6 +512,7 @@
       verifiedMessages++;
       agents[agentId] = data.agent;
       render({ agents: agents });
+      bump(agentId);
       checkedEl.textContent = 'updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
     } catch (e) {
       if (verifiedMessages === 0) {
@@ -504,6 +527,7 @@
     seenMessages = 0; verifiedMessages = 0;
     instKeys = null;
     current = null;
+    eggEls = {};
     spawn.innerHTML = '';
     countsEl.textContent = '';
     emptyEl.style.display = 'none';
